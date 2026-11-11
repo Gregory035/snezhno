@@ -469,6 +469,59 @@ final class SnowScene: SKScene {
         end.strokeColor = .clear
         end.zPosition = 1
         head.node.addChild(end)
+
+        let twigs = CGMutablePath()
+        let b = body.radius
+        for side: CGFloat in [-1, 1] {
+            twigs.move(to: CGPoint(x: side * b * 0.72, y: -b * 0.08))
+            twigs.addLine(to: CGPoint(x: side * b * 1.42, y: -b * 0.38))
+            twigs.addLine(to: CGPoint(x: side * b * 2.02, y: -b * 0.90))
+            twigs.move(to: CGPoint(x: side * b * 1.42, y: -b * 0.38))
+            twigs.addLine(to: CGPoint(x: side * b * 1.93, y: -b * 0.33))
+            twigs.move(to: CGPoint(x: side * b * 1.76, y: -b * 0.68))
+            twigs.addLine(to: CGPoint(x: side * b * 1.67, y: -b * 1.08))
+        }
+        let arms = SKShapeNode(path: twigs)
+        arms.name = "twig-arms"
+        arms.strokeColor = SKColor(red: 0.43, green: 0.28, blue: 0.17, alpha: 1)
+        arms.lineWidth = max(1.2, b * 0.12)
+        arms.lineCap = .round
+        arms.lineJoin = .round
+        arms.zPosition = -1
+        body.node.addChild(arms)
+
+        let hatPath = CGMutablePath()
+        hatPath.move(to: CGPoint(x: -r * 0.87, y: -r * 0.57))
+        hatPath.addCurve(to: CGPoint(x: r * 0.32, y: -r * 1.62),
+                         control1: CGPoint(x: -r * 0.93, y: -r * 1.38),
+                         control2: CGPoint(x: -r * 0.20, y: -r * 1.84))
+        hatPath.addQuadCurve(to: CGPoint(x: r * 0.87, y: -r * 0.57),
+                             control: CGPoint(x: r * 0.88, y: -r * 1.39))
+        hatPath.closeSubpath()
+        let hat = SKShapeNode(path: hatPath)
+        hat.name = "winter-hat"
+        hat.fillColor = scarf
+        hat.strokeColor = .clear
+        hat.zPosition = 2
+        head.node.addChild(hat)
+
+        let brim = SKShapeNode(rectOf: CGSize(width: r * 1.94, height: r * 0.34),
+                               cornerRadius: r * 0.16)
+        brim.position = CGPoint(x: 0, y: -r * 0.62)
+        brim.fillColor = SKColor(red: 0.97, green: 0.98, blue: 1, alpha: 1)
+        brim.strokeColor = .clear
+        brim.zPosition = 3
+        head.node.addChild(brim)
+
+        let pompom = SKShapeNode(circleOfRadius: r * 0.29)
+        pompom.name = "hat-pompom"
+        pompom.position = CGPoint(x: r * 0.29, y: -r * 1.67)
+        pompom.fillColor = brim.fillColor
+        pompom.strokeColor = SKColor(white: 1, alpha: 0.45)
+        pompom.lineWidth = 0.6
+        pompom.glowWidth = 0.5
+        pompom.zPosition = 3
+        head.node.addChild(pompom)
     }
 
     private static func texture(snowball: Bool) -> SKTexture {
