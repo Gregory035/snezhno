@@ -10,6 +10,12 @@ final class SnowScene: SKScene {
         var point: CGPoint
     }
 
+    private struct Powder {
+        let node: SKSpriteNode
+        var velocity: CGVector
+        var life: CGFloat
+    }
+
     private struct Ball {
         let bankID: CGWindowID
         let offset: CGFloat
@@ -24,6 +30,15 @@ final class SnowScene: SKScene {
     private var banks: [CGWindowID: Snowbank] = [:]
     private var landingSurfaces: [Snowbank] = []
     private var foregroundSurfaces: [Snowbank] = []
+    private var surfaceRows: [[Snowbank]] = []
+    private let rowHeight: CGFloat = 48
+    private var appWindowRects: [CGRect] = []
+    private var lastWindows: [DesktopWindow] = []
+    private var lastDisplay: CGRect = .null
+    private var lastSurfaceOptions: [Bool] = []
+    private var lastDepth: CGFloat = 0
+    private var lastGeometrySample: TimeInterval?
+    private var powder: [Powder] = []
     private var flakes: [Flake] = []
     private var balls: [Ball] = []
     private var dragNode: SKSpriteNode?
@@ -70,34 +85,114 @@ final class SnowScene: SKScene {
         powerSaving = enabled
     }
 
-    func refreshSurfaces(windows: [DesktopWindow], display: CGRect) {
+    func refreshSurfaces(windows: [DesktopWindow], display: CGRect,
+                         at time: TimeInterval = CACurrentMediaTime()) {
+        let elapsed = time - (lastGeometrySample ?? time)
+        lastGeometrySample = time
+        let options = [settings.snowOnWindows, settings.snowOnDock, settings.snowOnFloor]
+        let depth = CGFloat(settings.bankDepth)
+        guard windows != lastWindows || display != lastDisplay
+                || options != lastSurfaceOptions || depth != lastDepth else { return }
+        let sameDisplay = display == lastDisplay
+        lastWindows = windows
+        lastDisplay = display
+        lastSurfaceOptions = options
+        lastDepth = depth
+
         var occluders: [CGRect] = []
         var next: [CGWindowID: Snowbank] = [:]
         var surfaces: [Snowbank] = []
+        var windowRects: [CGRect] = []
         let viewport = CGRect(origin: .zero, size: size)
         for window in windows where window.frame.intersects(display) {
             let rect = window.frame.offsetBy(dx: -display.minX, dy: -display.minY)
+            if !window.isDock { windowRects.append(rect) }
             if rect.minY >= 24 {
-                let edgeInset: CGFloat = window.isDock ? 6 : 2
-                let bankFrame = rect.insetBy(dx: edgeInset, dy: 0)
+                let bankFrame = rect.insetBy(dx: window.isDock ? 6 : 8, dy: 0)
                 let bank = banks[window.id] ?? makeBank(id: window.id)
-                bank.update(frame: bankFrame, occludedBy: occluders, screen: viewport)
+                let previousFrame = bank.frame
+                let enabled = window.isDock ? settings.snowOnDock : settings.snowOnWindows
+                bank.node.isHidden = !enabled
+                bank.update(frame: bankFrame, occludedBy: occluders, screen: viewport, maximumDepth: depth)
+                if enabled {
+                    surfaces.append(bank)
+                    if sameDisplay && settings.shakeOffSnow && !window.isDock {
+                        shake(bank, previousFrame: previousFrame, elapsed: elapsed, time: time)
+                    }
+                }
                 next[window.id] = bank
-                surfaces.append(bank)
             }
             occluders.append(rect)
         }
         let floorID = Snowbank.floorID
         let floor = banks[floorID] ?? makeBank(id: floorID)
+        floor.node.isHidden = !settings.snowOnFloor
         floor.update(frame: CGRect(x: 0, y: size.height - 1, width: size.width, height: 1),
-                     occludedBy: occluders, screen: viewport)
+                     occludedBy: occluders, screen: viewport, maximumDepth: depth)
         next[floorID] = floor
-        surfaces.append(floor)
+        if settings.snowOnFloor { surfaces.append(floor) }
         for (id, bank) in banks where next[id] == nil { bank.node.removeFromParent() }
         banks = next
+        appWindowRects = windowRects
         foregroundSurfaces = surfaces
         landingSurfaces = surfaces.sorted { $0.frame.minY < $1.frame.minY }
+        rebuildSurfaceRows()
+        if landingSurfaces.isEmpty { cancelDrag() }
         refreshBalls()
+    }
+
+    private func rebuildSurfaceRows() {
+        let count = max(1, Int(ceil(size.height / rowHeight)) + 1)
+        surfaceRows = Array(repeating: [], count: count)
+        for bank in landingSurfaces {
+            let first = max(0, Int((bank.frame.minY - bank.maximumDepth) / rowHeight))
+            let last = min(count - 1, Int((bank.frame.minY + 7) / rowHeight))
+            if first <= last {
+                for row in first...last { surfaceRows[row].append(bank) }
+            }
+        }
+    }
+
+    private func shake(_ bank: Snowbank, previousFrame: CGRect, elapsed: TimeInterval, time: TimeInterval) {
+        guard !previousFrame.isEmpty, bank.frame.size == previousFrame.size,
+              elapsed > 0, elapsed < 0.4 else { return }
+        let dx = bank.frame.minX - previousFrame.minX
+        let dy = bank.frame.minY - previousFrame.minY
+        let distance = hypot(dx, dy)
+        let speed = distance / elapsed
+        guard distance >= 18 && speed >= 410 else { return }
+        let strength = min(0.92, 0.57 + (speed - 410) / 1300)
+        let points = bank.shake(strength: strength, at: time)
+        for point in points.prefix(max(0, 72 - powder.count)) {
+            let width = CGFloat.random(in: 3...6)
+            let node = SKSpriteNode(texture: flakeTexture, size: CGSize(width: width, height: width))
+            node.position = point
+            node.alpha = 0.85
+            node.zPosition = 3
+            root.addChild(node)
+            powder.append(Powder(node: node,
+                                 velocity: CGVector(dx: -dx / distance * 95 + .random(in: -32...32),
+                                                    dy: -dy / distance * 58 + .random(in: -24...12)),
+                                 life: .random(in: 0.55...1.0)))
+        }
+    }
+
+    private func updatePowder(elapsed: CGFloat, masked: Bool) {
+        for index in powder.indices.reversed() {
+            powder[index].life -= elapsed
+            let particle = powder[index]
+            if particle.life <= 0 {
+                particle.node.removeFromParent()
+                powder.remove(at: index)
+                continue
+            }
+            powder[index].velocity.dy += 220 * elapsed
+            let position = CGPoint(x: particle.node.position.x + particle.velocity.dx * elapsed,
+                                   y: particle.node.position.y + particle.velocity.dy * elapsed)
+            particle.node.position = position
+            particle.node.alpha = min(0.85, particle.life * 1.6)
+            particle.node.isHidden = masked && appWindowRects.contains { $0.contains(position) }
+        }
     }
 
     private func makeBank(id: CGWindowID) -> Snowbank {
@@ -131,6 +226,8 @@ final class SnowScene: SKScene {
         for bank in banks.values { bank.clear() }
         for ball in balls { ball.node.removeFromParent() }
         balls.removeAll()
+        for particle in powder { particle.node.removeFromParent() }
+        powder.removeAll()
         cancelDrag()
     }
 
@@ -144,6 +241,8 @@ final class SnowScene: SKScene {
         let time = CGFloat(currentTime.truncatingRemainder(dividingBy: 3600))
         let wind = CGFloat(settings.wind) * 150
         let speed = settings.snowfall.speed
+        let buildup = CGFloat(settings.buildup)
+        let masked = !settings.flakesOverWindows
         for index in flakes.indices {
             let flake = flakes[index]
             let old = flake.point
@@ -154,13 +253,15 @@ final class SnowScene: SKScene {
             if new.x < -12 { new.x = size.width + 11 }
             if new.x > size.width + 12 { new.x = -11 }
             var landed = false
-            for bank in landingSurfaces {
+            let row = max(0, Int(new.y / rowHeight))
+            let nearby = surfaceRows.indices.contains(row) ? surfaceRows[row] : []
+            for bank in nearby {
                 // Skip banks far outside the flake's vertical step.
-                guard bank.frame.minY >= old.y, bank.frame.minY - 24 <= new.y,
+                guard bank.frame.minY >= old.y, bank.frame.minY - bank.maximumDepth <= new.y,
                       bank.contains(x: new.x) else { continue }
                 let y = bank.surface(at: new.x)
                 if old.y <= y && new.y >= y {
-                    bank.deposit(at: new.x, amount: 0.58 + flake.radius * 0.55)
+                    bank.deposit(at: new.x, amount: (0.58 + flake.radius * 0.55) * buildup)
                     landed = true
                     break
                 }
@@ -170,10 +271,13 @@ final class SnowScene: SKScene {
             }
             flakes[index].point = new
             flake.node.position = new
+            let hidden = masked && appWindowRects.contains { $0.contains(new) }
+            if flake.node.isHidden != hidden { flake.node.isHidden = hidden }
         }
+        updatePowder(elapsed: dt, masked: masked)
         brushWithCursor()
-        if currentTime - lastBankRender >= 1.0 / 18 {
-            for bank in banks.values { bank.render() }
+        if currentTime - lastBankRender >= 1.0 / 10 {
+            for bank in landingSurfaces { bank.render() }
             refreshBalls()
             lastBankRender = currentTime
         }
@@ -311,7 +415,7 @@ final class SnowScene: SKScene {
     private func refreshBalls() {
         // Keep balls for temporarily hidden windows, such as a minimized Finder window.
         for ball in balls {
-            guard let bank = banks[ball.bankID] else {
+            guard let bank = banks[ball.bankID], !bank.node.isHidden else {
                 ball.node.isHidden = true
                 continue
             }

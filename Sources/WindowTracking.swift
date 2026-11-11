@@ -1,7 +1,7 @@
 import AppKit
 import CoreGraphics
 
-struct DesktopWindow {
+struct DesktopWindow: Equatable {
     let id: CGWindowID
     let frame: CGRect
     let isDock: Bool
@@ -16,7 +16,10 @@ enum WindowTracking {
 
         let dockPID = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock")
             .first?.processIdentifier
+        let managerPIDs = Set(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.WindowManager")
+            .map(\.processIdentifier))
         let ownPID = ProcessInfo.processInfo.processIdentifier
+        let dockLevel = Int(CGWindowLevelForKey(.dockWindow))
         return rows.compactMap { row in
             guard let id = row[kCGWindowNumber as String] as? Int,
                   !overlayIDs.contains(id),
@@ -27,9 +30,10 @@ enum WindowTracking {
                   let rect = CGRect(dictionaryRepresentation: bounds),
                   rect.width >= 50, rect.height >= 36 else { return nil }
 
-            let dockLevel = Int(CGWindowLevelForKey(.dockWindow))
+            // Stage Manager previews belong to WindowManager or Dock, even at the normal window level.
+            guard !managerPIDs.contains(owner) else { return nil }
             let isDock = owner == dockPID && layer == dockLevel
-            guard layer == 0 || isDock else { return nil }
+            guard isDock || (layer == 0 && owner != dockPID) else { return nil }
             return DesktopWindow(id: CGWindowID(id), frame: rect, isDock: isDock,
                                  canCoverScreen: owner != ownPID && !isDock)
         }
@@ -44,5 +48,4 @@ enum WindowTracking {
         return abs(rect.minX - display.minX) <= 3 && abs(rect.maxX - display.maxX) <= 3
             && abs(rect.minY - display.minY) <= 3 && abs(rect.maxY - display.maxY) <= 3
     }
-
 }

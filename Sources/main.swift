@@ -14,6 +14,8 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        status.autosaveName = "Snezhno"
+        status.isVisible = true
         updateStatusIcon()
         let menu = NSMenu()
         menu.delegate = self
@@ -39,8 +41,15 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 if tool != .snowball { self.overlays.values.forEach { $0.scene.cancelDrag() } }
+                self.mouseTimer?.invalidate()
+                self.mouseTimer = tool == .snowball
+                    ? self.startTimer(interval: 1.0 / 30, selector: #selector(self.refreshMouse))
+                    : nil
                 self.refreshMouse()
             }
+        }.store(in: &subscriptions)
+        settings.$smoothAnimation.dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.updatePower() }
         }.store(in: &subscriptions)
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -49,10 +58,10 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return nil
         }
         rebuildDisplays()
-        geometryTimer = startTimer(interval: 1.0 / 16, selector: #selector(refreshGeometry))
-        mouseTimer = startTimer(interval: 1.0 / 30, selector: #selector(refreshMouse))
-        if !UserDefaults.standard.bool(forKey: "hasLaunched") {
-            UserDefaults.standard.set(true, forKey: "hasLaunched")
+        geometryTimer = startTimer(interval: 1.0 / 12, selector: #selector(refreshGeometry))
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        if UserDefaults.standard.string(forKey: "settingsShownForVersion") != version {
+            UserDefaults.standard.set(version, forKey: "settingsShownForVersion")
             showSettings()
         }
     }
@@ -98,7 +107,9 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func updatePower() {
         let enabled = ProcessInfo.processInfo.isLowPowerModeEnabled
-        for overlay in overlays.values { overlay.setPowerSaving(enabled) }
+        for overlay in overlays.values {
+            overlay.updateAnimation(powerSaving: enabled, smooth: settings.smoothAnimation)
+        }
     }
 
     @objc private func refreshGeometry() {
@@ -126,6 +137,7 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         image?.isTemplate = true
         status.button?.image = image
         status.button?.toolTip = "Снежно"
+        status.button?.setAccessibilityLabel("Снежно")
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -156,6 +168,7 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(tools)
         item("Поставить снеговика", action: #selector(addSnowman), key: "", menu: menu)
+            .isEnabled = settings.hasSnowSurfaces
         item("Очистить снег", action: #selector(clearSnow), key: "", menu: menu)
         menu.addItem(.separator())
         item("Выйти из «Снежно»", action: #selector(quit), key: "q", menu: menu)
@@ -197,6 +210,7 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showSettings() {
+        status.isVisible = true
         if settingsWindow == nil {
             let content = NSHostingView(rootView: SettingsView(settings: settings, clear: { [weak self] in
                 self?.clearSnow()

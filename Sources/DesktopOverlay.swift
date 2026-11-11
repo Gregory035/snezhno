@@ -35,7 +35,8 @@ final class DesktopOverlay {
         view = SnowView(frame: CGRect(origin: .zero, size: screen.frame.size))
         view.allowsTransparency = true
         view.ignoresSiblingOrder = true
-        view.preferredFramesPerSecond = 60
+        view.shouldCullNonVisibleNodes = true
+        view.preferredFramesPerSecond = settings.smoothAnimation ? 60 : 30
         view.presentScene(scene)
         view.isPaused = true
         panel.contentView = view
@@ -70,8 +71,8 @@ final class DesktopOverlay {
         }
     }
 
-    func setPowerSaving(_ enabled: Bool) {
-        view.preferredFramesPerSecond = enabled ? 30 : 60
+    func updateAnimation(powerSaving enabled: Bool, smooth: Bool) {
+        view.preferredFramesPerSecond = enabled ? 20 : (smooth ? 60 : 30)
         scene.setPowerSaving(enabled)
     }
 

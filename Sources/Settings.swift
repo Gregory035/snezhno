@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 enum Snowfall: String, CaseIterable, Identifiable {
@@ -66,7 +67,17 @@ final class SnowSettings: ObservableObject {
     @Published var wind: Double { didSet { defaults.set(wind, forKey: "wind") } }
     @Published var paused: Bool { didSet { defaults.set(paused, forKey: "paused") } }
     @Published var fullscreenPause: Bool { didSet { defaults.set(fullscreenPause, forKey: "fullscreenPause") } }
+    @Published var flakesOverWindows: Bool { didSet { defaults.set(flakesOverWindows, forKey: "flakesOverWindows") } }
+    @Published var snowOnWindows: Bool { didSet { defaults.set(snowOnWindows, forKey: "snowOnWindows") } }
+    @Published var snowOnDock: Bool { didSet { defaults.set(snowOnDock, forKey: "snowOnDock") } }
+    @Published var snowOnFloor: Bool { didSet { defaults.set(snowOnFloor, forKey: "snowOnFloor") } }
+    @Published var shakeOffSnow: Bool { didSet { defaults.set(shakeOffSnow, forKey: "shakeOffSnow") } }
+    @Published var bankDepth: Double { didSet { defaults.set(bankDepth, forKey: "bankDepth") } }
+    @Published var buildup: Double { didSet { defaults.set(buildup, forKey: "buildup") } }
+    @Published var smoothAnimation: Bool { didSet { defaults.set(smoothAnimation, forKey: "smoothAnimation") } }
     @Published var tool: SnowTool = .cursor
+
+    var hasSnowSurfaces: Bool { snowOnWindows || snowOnDock || snowOnFloor }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -74,85 +85,61 @@ final class SnowSettings: ObservableObject {
         wind = min(1, max(-1, defaults.double(forKey: "wind")))
         paused = defaults.bool(forKey: "paused")
         fullscreenPause = defaults.object(forKey: "fullscreenPause") as? Bool ?? true
+        flakesOverWindows = defaults.object(forKey: "flakesOverWindows") as? Bool ?? true
+        snowOnWindows = defaults.object(forKey: "snowOnWindows") as? Bool ?? true
+        snowOnDock = defaults.object(forKey: "snowOnDock") as? Bool ?? true
+        snowOnFloor = defaults.object(forKey: "snowOnFloor") as? Bool ?? true
+        shakeOffSnow = defaults.object(forKey: "shakeOffSnow") as? Bool ?? true
+        bankDepth = min(30, max(6, defaults.object(forKey: "bankDepth") as? Double ?? 18))
+        buildup = min(2, max(0.25, defaults.object(forKey: "buildup") as? Double ?? 1))
+        smoothAnimation = defaults.bool(forKey: "smoothAnimation")
     }
 }
 
 struct SettingsView: View {
+    private enum Section: String, CaseIterable, Identifiable {
+        case weather = "Снегопад"
+        case banks = "Сугробы"
+        case controls = "Управление"
+
+        var id: Self { self }
+    }
+
     @ObservedObject var settings: SnowSettings
     let clear: () -> Void
+    @State private var section = Section.weather
+    @State private var loginStatus = SMAppService.mainApp.status
+    @State private var loginError: String?
 
     private let accent = Color(red: 0.69, green: 0.83, blue: 1)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 17) {
+        VStack(alignment: .leading, spacing: 16) {
             header
-            VStack(alignment: .leading, spacing: 15) {
-                VStack(alignment: .leading, spacing: 7) {
-                    sectionTitle("Снегопад", icon: "cloud.snow")
-                    Picker("Снегопад", selection: $settings.snowfall) {
-                        ForEach(Snowfall.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .controlSize(.large)
-                }
-                Divider()
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        sectionTitle("Ветер", icon: "wind")
-                        Spacer()
-                        Button(windLabel) { settings.wind = 0 }
-                            .buttonStyle(.plain)
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(accent)
-                            .help("Сбросить ветер")
-                    }
-                    HStack(spacing: 11) {
-                        Image(systemName: "arrow.left").foregroundStyle(.secondary)
-                        Slider(value: $settings.wind, in: -1...1, step: 0.05) { Text("Ветер") }
-                            .labelsHidden()
-                        Image(systemName: "arrow.right").foregroundStyle(.secondary)
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                }
-                Divider()
-                VStack(alignment: .leading, spacing: 7) {
-                    sectionTitle("Инструмент", icon: "hand.point.up.left")
-                    Picker("Инструмент", selection: $settings.tool) {
-                        ForEach(SnowTool.allCases) { tool in
-                            Text(tool.label).tag(tool)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .controlSize(.large)
-                    Text(settings.tool.hint)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(height: 33, alignment: .topLeading)
-                        .fixedSize(horizontal: false, vertical: true)
+            Picker("Раздел настроек", selection: $section) {
+                ForEach(Section.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.large)
+
+            Group {
+                switch section {
+                case .weather: weather
+                case .banks: banks
+                case .controls: controls
                 }
             }
-            .padding(15)
+            .frame(maxWidth: .infinity, minHeight: 272, alignment: .topLeading)
+            .padding(16)
             .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 15))
             .overlay {
                 RoundedRectangle(cornerRadius: 15).strokeBorder(.white.opacity(0.10))
                     .allowsHitTesting(false)
             }
-
-            HStack {
-                Toggle("Пауза в полноэкранном режиме", isOn: $settings.fullscreenPause)
-                    .toggleStyle(.checkbox)
-                Spacer()
-                Button(action: clear) {
-                    Label("Очистить снег", systemImage: "sparkles")
-                }
-                .help("Убрать все сугробы и снежки")
-            }
-            .font(.system(size: 12))
         }
         .padding(20)
-        .frame(width: 440)
+        .frame(width: 460)
         .tint(accent)
         .preferredColorScheme(.dark)
         .environment(\.colorScheme, .dark)
@@ -161,6 +148,144 @@ struct SettingsView: View {
                 colors: [Color(red: 0.12, green: 0.17, blue: 0.30), Color(red: 0.055, green: 0.075, blue: 0.14)],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            loginStatus = SMAppService.mainApp.status
+        }
+    }
+
+    private var weather: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 7) {
+                sectionTitle("Интенсивность", icon: "cloud.snow")
+                Picker("Интенсивность", selection: $settings.snowfall) {
+                    ForEach(Snowfall.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.large)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    sectionTitle("Ветер", icon: "wind")
+                    Spacer()
+                    Button(windLabel) { settings.wind = 0 }
+                        .buttonStyle(.plain)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(accent)
+                        .help("Сбросить ветер")
+                }
+                HStack(spacing: 11) {
+                    Image(systemName: "arrow.left").foregroundStyle(.secondary)
+                    Slider(value: $settings.wind, in: -1...1, step: 0.05) { Text("Ветер") }
+                        .labelsHidden()
+                    Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                }
+                .font(.system(size: 11, weight: .medium))
+            }
+            Divider()
+            Toggle("Падающий снег поверх окон", isOn: $settings.flakesOverWindows)
+                .toggleStyle(.checkbox)
+            Text("Выключи, чтобы снежинки были видны только на свободных участках экрана.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker("Частота кадров", selection: $settings.smoothAnimation) {
+                Text("30 кадр/с").tag(false)
+                Text("60 кадр/с").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .help("30 кадр/с снижает нагрузку. В режиме энергосбережения частота уменьшается автоматически.")
+        }
+    }
+
+    private var banks: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            sectionTitle("Где накапливается снег", icon: "square.stack")
+            HStack(spacing: 16) {
+                Toggle("Окна", isOn: $settings.snowOnWindows)
+                Toggle("Dock", isOn: $settings.snowOnDock)
+                Toggle("Низ экрана", isOn: $settings.snowOnFloor)
+            }
+            .toggleStyle(.checkbox)
+            Divider()
+            VStack(alignment: .leading, spacing: 7) {
+                slider("Высота сугроба", value: $settings.bankDepth, range: 6...30, step: 1,
+                       formatted: "\(Int(settings.bankDepth)) пт")
+                slider("Скорость накопления", value: $settings.buildup, range: 0.25...2, step: 0.25,
+                       formatted: "\(Int(settings.buildup * 100))%")
+            }
+            .disabled(!settings.hasSnowSurfaces)
+            Toggle("Стряхивать снег при резком движении окна", isOn: $settings.shakeOffSnow)
+                .toggleStyle(.checkbox)
+                .disabled(!settings.snowOnWindows)
+            Button(action: clear) {
+                Label("Очистить сугробы и снежки", systemImage: "sparkles")
+            }
+        }
+    }
+
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            VStack(alignment: .leading, spacing: 7) {
+                sectionTitle("Инструмент", icon: "hand.point.up.left")
+                Picker("Инструмент", selection: $settings.tool) {
+                    ForEach(SnowTool.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.large)
+                Text(settings.tool.hint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 34, alignment: .topLeading)
+            }
+            Divider()
+            Toggle("Пауза в полноэкранном режиме", isOn: $settings.fullscreenPause)
+                .toggleStyle(.checkbox)
+            Toggle("Запускать при входе в macOS", isOn: Binding(
+                get: { loginStatus == .enabled || loginStatus == .requiresApproval },
+                set: setLaunchAtLogin
+            ))
+            .toggleStyle(.checkbox)
+            if loginStatus == .requiresApproval {
+                Button("Подтвердить в системных настройках") {
+                    SMAppService.openSystemSettingsLoginItems()
+                }
+            }
+            if let loginError {
+                Text(loginError)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        let service = SMAppService.mainApp
+        loginError = nil
+        do {
+            if enabled {
+                try service.register()
+            } else {
+                try service.unregister()
+            }
+        } catch {
+            if service.status != .requiresApproval {
+                loginError = "Не удалось изменить автозапуск. Проверь объекты входа в настройках macOS."
+            }
+        }
+        loginStatus = service.status
+    }
+
+    private func slider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>,
+                        step: Double, formatted: String) -> some View {
+        VStack(spacing: 2) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(formatted).font(.caption.monospacedDigit()).foregroundStyle(accent)
+            }
+            Slider(value: value, in: range, step: step) { Text(title) }.labelsHidden()
         }
     }
 
