@@ -14,6 +14,7 @@ final class SnowScene: SKScene {
         let node: SKSpriteNode
         var velocity: CGVector
         var life: CGFloat
+        var amount: CGFloat = 0
     }
 
     private struct Ball {
@@ -49,10 +50,12 @@ final class SnowScene: SKScene {
     private var lastBankRender: TimeInterval = 0
     private var powerSaving = false
 
+    weak var hostView: NSView?
+
     var isDragging: Bool { dragNode != nil }
 
     func canStartSnowball(at cursor: CGPoint) -> Bool {
-        guard let window = view?.window, window.frame.contains(cursor) else { return false }
+        guard let window = (hostView ?? view)?.window, window.frame.contains(cursor) else { return false }
         return isNearSnow(CGPoint(x: cursor.x - window.frame.minX, y: window.frame.maxY - cursor.y))
     }
 
@@ -89,7 +92,7 @@ final class SnowScene: SKScene {
                          at time: TimeInterval = CACurrentMediaTime()) {
         let elapsed = time - (lastGeometrySample ?? time)
         lastGeometrySample = time
-        let options = [settings.snowOnWindows, settings.snowOnDock, settings.snowOnFloor]
+        let options = [settings.snowOnWindows, settings.snowOnDock, settings.snowOnFloor, settings.liftSnowWithDock]
         let depth = CGFloat(settings.bankDepth)
         guard windows != lastWindows || display != lastDisplay
                 || options != lastSurfaceOptions || depth != lastDepth else { return }
@@ -99,6 +102,8 @@ final class SnowScene: SKScene {
         lastSurfaceOptions = options
         lastDepth = depth
 
+        let oldDock = banks[Snowbank.dockID]
+        let dockWasVisible = oldDock?.node.isHidden == false
         var occluders: [CGRect] = []
         var next: [CGWindowID: Snowbank] = [:]
         var surfaces: [Snowbank] = []
@@ -109,7 +114,8 @@ final class SnowScene: SKScene {
             if !window.isDock { windowRects.append(rect) }
             if rect.minY >= 24 {
                 let bankFrame = rect.insetBy(dx: window.isDock ? 6 : 8, dy: 0)
-                let bank = banks[window.id] ?? makeBank(id: window.id)
+                let id = window.isDock ? Snowbank.dockID : window.id
+                let bank = banks[id] ?? makeBank(id: id)
                 let previousFrame = bank.frame
                 let enabled = window.isDock ? settings.snowOnDock : settings.snowOnWindows
                 bank.node.isHidden = !enabled
@@ -120,7 +126,7 @@ final class SnowScene: SKScene {
                         shake(bank, previousFrame: previousFrame, elapsed: elapsed, time: time)
                     }
                 }
-                next[window.id] = bank
+                next[id] = bank
             }
             occluders.append(rect)
         }
@@ -131,6 +137,18 @@ final class SnowScene: SKScene {
                      occludedBy: occluders, screen: viewport, maximumDepth: depth)
         next[floorID] = floor
         if settings.snowOnFloor { surfaces.append(floor) }
+        let visibleDock = next[Snowbank.dockID]
+        if settings.liftSnowWithDock && settings.snowOnFloor && settings.snowOnDock {
+            if let dock = visibleDock, !dockWasVisible {
+                floor.transferSnow(to: dock)
+            } else if visibleDock == nil, dockWasVisible, let dock = oldDock {
+                dock.transferSnow(to: floor)
+            }
+        }
+        if visibleDock == nil, let dock = oldDock {
+            dock.node.isHidden = true
+            next[Snowbank.dockID] = dock
+        }
         for (id, bank) in banks where next[id] == nil { bank.node.removeFromParent() }
         banks = next
         appWindowRects = windowRects
@@ -163,18 +181,24 @@ final class SnowScene: SKScene {
         guard distance >= 18 && speed >= 410 else { return }
         let strength = min(0.92, 0.57 + (speed - 410) / 1300)
         let points = bank.shake(strength: strength, at: time)
-        for point in points.prefix(max(0, 72 - powder.count)) {
-            let width = CGFloat.random(in: 3...6)
-            let node = SKSpriteNode(texture: flakeTexture, size: CGSize(width: width, height: width))
-            node.position = point
-            node.alpha = 0.85
-            node.zPosition = 3
-            root.addChild(node)
-            powder.append(Powder(node: node,
-                                 velocity: CGVector(dx: -dx / distance * 95 + .random(in: -32...32),
-                                                    dy: -dy / distance * 58 + .random(in: -24...12)),
-                                 life: .random(in: 0.55...1.0)))
+        for point in points {
+            emitPowder(at: CGPoint(x: point.x, y: max(point.y, bank.frame.minY + 2)),
+                       velocity: CGVector(dx: -dx / distance * 95 + .random(in: -32...32),
+                                          dy: -dy / distance * 58 + .random(in: -24...12)),
+                       amount: bank.maximumDepth * strength)
         }
+    }
+
+    private func emitPowder(at point: CGPoint, velocity: CGVector, amount: CGFloat) {
+        guard powder.count < 96, amount > 0 else { return }
+        let width = min(9, max(3, sqrt(amount) * 1.4))
+        let node = SKSpriteNode(texture: ballTexture, size: CGSize(width: width, height: width * 0.7))
+        node.position = point
+        node.zRotation = .random(in: -0.5...0.5)
+        node.alpha = 0.9
+        node.zPosition = 3
+        root.addChild(node)
+        powder.append(Powder(node: node, velocity: velocity, life: 3, amount: amount))
     }
 
     private func updatePowder(elapsed: CGFloat, masked: Bool) {
@@ -186,11 +210,29 @@ final class SnowScene: SKScene {
                 powder.remove(at: index)
                 continue
             }
-            powder[index].velocity.dy += 220 * elapsed
+            powder[index].velocity.dy += 320 * elapsed
+            let oldPosition = particle.node.position
             let position = CGPoint(x: particle.node.position.x + particle.velocity.dx * elapsed,
                                    y: particle.node.position.y + particle.velocity.dy * elapsed)
+            let row = max(0, Int(position.y / rowHeight))
+            let nearby = surfaceRows.indices.contains(row) ? surfaceRows[row] : []
+            if let landing = nearby.first(where: {
+                $0.contains(x: position.x) && oldPosition.y <= $0.surface(at: position.x)
+                    && position.y >= $0.surface(at: position.x)
+            }) {
+                landing.deposit(at: position.x, amount: particle.amount)
+                particle.node.removeFromParent()
+                powder.remove(at: index)
+                continue
+            }
+            if position.y > size.height + 10 {
+                particle.node.removeFromParent()
+                powder.remove(at: index)
+                continue
+            }
             particle.node.position = position
-            particle.node.alpha = min(0.85, particle.life * 1.6)
+            particle.node.zRotation += particle.velocity.dx * elapsed * 0.012
+            particle.node.alpha = min(0.9, particle.life * 2)
             particle.node.isHidden = masked && appWindowRects.contains { $0.contains(position) }
         }
     }
@@ -304,7 +346,7 @@ final class SnowScene: SKScene {
     }
 
     private func brushWithCursor() {
-        guard settings.tool == .mitten, let window = view?.window else {
+        guard settings.tool == .mitten, let window = (hostView ?? view)?.window else {
             previousCursor = nil
             return
         }
@@ -324,12 +366,22 @@ final class SnowScene: SKScene {
             let x = last.x + (point.x - last.x) * progress
             let y = last.y + (point.y - last.y) * progress
             for bank in landingSurfaces where abs(bank.frame.minY - y) < 29 {
-                bank.scoop(at: x, radius: 27, strength: 3.5 + min(distance, 25) * 0.23)
+                let removed = bank.scoop(at: x, radius: 27, strength: 3.5 + min(distance, 25) * 0.23)
+                if removed >= 0.8 {
+                    emitPowder(at: CGPoint(x: x, y: bank.frame.minY + 3),
+                               velocity: CGVector(dx: (point.x - last.x) * 3 + .random(in: -18...18),
+                                                  dy: .random(in: 8...35)),
+                               amount: removed)
+                }
             }
         }
     }
 
     private func point(for event: NSEvent) -> CGPoint {
+        if let hostView {
+            let point = hostView.convert(event.locationInWindow, from: nil)
+            return CGPoint(x: point.x, y: size.height - point.y)
+        }
         let point = event.location(in: self)
         return CGPoint(x: point.x, y: size.height - point.y)
     }
@@ -339,7 +391,7 @@ final class SnowScene: SKScene {
         cancelDrag()
         let point = point(for: event)
         guard isNearSnow(point) else { return }
-        view?.window?.makeKey()
+        (hostView ?? view)?.window?.makeKey()
         dragRadius = 5
         lastDragPoint = point
         let node = makeBallNode(radius: dragRadius)

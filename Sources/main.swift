@@ -10,6 +10,9 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var geometryTimer: Timer?
     private var mouseTimer: Timer?
     private var keyMonitor: Any?
+    private var lastGeometryRefresh: TimeInterval = 0
+    private var dockAnimationUntil: TimeInterval = 0
+    private var lastDockFrames: [CGRect] = []
     private var subscriptions = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -58,7 +61,7 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return nil
         }
         rebuildDisplays()
-        geometryTimer = startTimer(interval: 1.0 / 12, selector: #selector(refreshGeometry))
+        geometryTimer = startTimer(interval: 1.0 / 30, selector: #selector(refreshGeometry))
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
         if UserDefaults.standard.string(forKey: "settingsShownForVersion") != version {
             UserDefaults.standard.set(version, forKey: "settingsShownForVersion")
@@ -94,8 +97,8 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             let id = CGDirectDisplayID(number.uint32Value)
             let display = CGDisplayBounds(id)
-            let overlay = previous.removeValue(forKey: id)
-                ?? DesktopOverlay(screen: screen, display: display, settings: settings)
+            guard let overlay = previous.removeValue(forKey: id)
+                ?? DesktopOverlay(screen: screen, display: display, settings: settings) else { continue }
             overlay.updateFrame(screen: screen, display: display)
             next[id] = overlay
         }
@@ -117,7 +120,15 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for overlay in overlays.values { overlay.setHidden(true) }
             return
         }
+        let now = CACurrentMediaTime()
+        guard now - lastGeometryRefresh >= 1.0 / 12 || now < dockAnimationUntil else { return }
+        lastGeometryRefresh = now
         let windows = WindowTracking.snapshot(overlayIDs: Set(overlays.values.map(\.windowNumber)))
+        let dockFrames = windows.filter(\.isDock).map(\.frame)
+        if dockFrames != lastDockFrames {
+            dockAnimationUntil = now + 0.4
+            lastDockFrames = dockFrames
+        }
         for overlay in overlays.values {
             let hidden = settings.fullscreenPause && WindowTracking.isFullscreen(windows, on: overlay.display)
             overlay.setHidden(hidden)

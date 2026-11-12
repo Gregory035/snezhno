@@ -14,31 +14,26 @@ private final class SnowPanel: NSPanel {
     }
 }
 
-private final class SnowView: SKView {
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-}
-
 final class DesktopOverlay {
     let scene: SnowScene
     private let panel: SnowPanel
-    private let view: SnowView
+    private let view: SnowRenderView
     private(set) var display: CGRect
     private var hidden = true
 
     var windowNumber: Int { panel.windowNumber }
 
-    init(screen: NSScreen, display: CGRect, settings: SnowSettings) {
+    init?(screen: NSScreen, display: CGRect, settings: SnowSettings) {
         self.display = display
         panel = SnowPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
                           backing: .buffered, defer: false, screen: screen)
         scene = SnowScene(size: screen.frame.size, settings: settings)
-        view = SnowView(frame: CGRect(origin: .zero, size: screen.frame.size))
-        view.allowsTransparency = true
-        view.ignoresSiblingOrder = true
-        view.shouldCullNonVisibleNodes = true
-        view.preferredFramesPerSecond = settings.smoothAnimation ? 60 : 30
-        view.presentScene(scene)
-        view.isPaused = true
+        let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        guard let renderView = SnowRenderView(frame: CGRect(origin: .zero, size: screen.frame.size),
+                                               scene: scene, displayID: number?.uint32Value ?? CGMainDisplayID())
+        else { return nil }
+        view = renderView
+        view.setFrameRate(settings.smoothAnimation ? 60 : 30)
         panel.contentView = view
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -61,7 +56,7 @@ final class DesktopOverlay {
     func setHidden(_ hidden: Bool) {
         guard hidden != self.hidden else { return }
         self.hidden = hidden
-        view.isPaused = hidden
+        view.setRunning(!hidden)
         if hidden {
             panel.ignoresMouseEvents = true
             scene.cancelDrag()
@@ -72,7 +67,7 @@ final class DesktopOverlay {
     }
 
     func updateAnimation(powerSaving enabled: Bool, smooth: Bool) {
-        view.preferredFramesPerSecond = enabled ? 20 : (smooth ? 60 : 30)
+        view.setFrameRate(enabled ? 20 : (smooth ? 60 : 30))
         scene.setPowerSaving(enabled)
     }
 
@@ -87,6 +82,7 @@ final class DesktopOverlay {
     func addSnowman() -> Bool { !hidden && scene.addSnowman() }
 
     func close() {
+        view.setRunning(false)
         panel.close()
     }
 }

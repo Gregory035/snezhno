@@ -71,6 +71,7 @@ final class SnowSettings: ObservableObject {
     @Published var snowOnWindows: Bool { didSet { defaults.set(snowOnWindows, forKey: "snowOnWindows") } }
     @Published var snowOnDock: Bool { didSet { defaults.set(snowOnDock, forKey: "snowOnDock") } }
     @Published var snowOnFloor: Bool { didSet { defaults.set(snowOnFloor, forKey: "snowOnFloor") } }
+    @Published var liftSnowWithDock: Bool { didSet { defaults.set(liftSnowWithDock, forKey: "liftSnowWithDock") } }
     @Published var shakeOffSnow: Bool { didSet { defaults.set(shakeOffSnow, forKey: "shakeOffSnow") } }
     @Published var bankDepth: Double { didSet { defaults.set(bankDepth, forKey: "bankDepth") } }
     @Published var buildup: Double { didSet { defaults.set(buildup, forKey: "buildup") } }
@@ -85,10 +86,11 @@ final class SnowSettings: ObservableObject {
         wind = min(1, max(-1, defaults.double(forKey: "wind")))
         paused = defaults.bool(forKey: "paused")
         fullscreenPause = defaults.object(forKey: "fullscreenPause") as? Bool ?? true
-        flakesOverWindows = defaults.object(forKey: "flakesOverWindows") as? Bool ?? true
+        flakesOverWindows = defaults.object(forKey: "flakesOverWindows") as? Bool ?? false
         snowOnWindows = defaults.object(forKey: "snowOnWindows") as? Bool ?? true
         snowOnDock = defaults.object(forKey: "snowOnDock") as? Bool ?? true
         snowOnFloor = defaults.object(forKey: "snowOnFloor") as? Bool ?? true
+        liftSnowWithDock = defaults.object(forKey: "liftSnowWithDock") as? Bool ?? true
         shakeOffSnow = defaults.object(forKey: "shakeOffSnow") as? Bool ?? true
         bankDepth = min(30, max(6, defaults.object(forKey: "bankDepth") as? Double ?? 18))
         buildup = min(2, max(0.25, defaults.object(forKey: "buildup") as? Double ?? 1))
@@ -130,7 +132,7 @@ struct SettingsView: View {
                 case .controls: controls
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 272, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 300, alignment: .topLeading)
             .padding(16)
             .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 15))
             .overlay {
@@ -207,6 +209,10 @@ struct SettingsView: View {
                 Toggle("Низ экрана", isOn: $settings.snowOnFloor)
             }
             .toggleStyle(.checkbox)
+            Toggle("Поднимать снег вместе с Dock", isOn: $settings.liftSnowWithDock)
+                .toggleStyle(.checkbox)
+                .disabled(!settings.snowOnDock || !settings.snowOnFloor)
+                .help("При появлении Dock снег переходит на него, при скрытии возвращается вниз.")
             Divider()
             VStack(alignment: .leading, spacing: 7) {
                 slider("Высота сугроба", value: $settings.bankDepth, range: 6...30, step: 1,

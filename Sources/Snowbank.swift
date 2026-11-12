@@ -2,6 +2,7 @@ import SpriteKit
 
 final class Snowbank {
     static let floorID = CGWindowID.max
+    static let dockID = CGWindowID.max - 1
     private static let sampleWidth: CGFloat = 4
     private static let depositWeights: [CGFloat] = [0.10, 0.26, 0.54, 1, 0.54, 0.26, 0.10]
 
@@ -143,6 +144,20 @@ final class Snowbank {
         for bin in amounts.indices { amounts[bin] *= 1 - strength }
         needsRendering = true
         return points
+    }
+
+    func transferSnow(to target: Snowbank) {
+        guard !target.amounts.isEmpty else { return }
+        for bin in amounts.indices where amounts[bin] > 0 {
+            let x = frame.minX + (CGFloat(bin) + 0.5) * binWidth
+            guard x >= target.frame.minX, x < target.frame.maxX else { continue }
+            let destination = target.index(at: x)
+            let amount = amounts[bin] * maximumDepth / target.maximumDepth * binWidth / target.binWidth
+            target.amounts[destination] = min(target.capacity[destination], target.amounts[destination] + amount)
+            amounts[bin] = 0
+        }
+        needsRendering = true
+        target.needsRendering = true
     }
 
     func clear() {
